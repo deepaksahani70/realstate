@@ -1,20 +1,280 @@
 
+<?php
+require_once __DIR__ . '/../admin/config/database.php';
+function blog_detail_e($value): string
+{
+    return htmlspecialchars((string) ($value ?? ''), ENT_QUOTES, 'UTF-8');
+}
+
+$baseUrl = rtrim(APP_URL, '/');
+$slug = trim($_GET['slug'] ?? '');
+
+if ($slug === '') {
+    http_response_code(404);
+    exit('Blog not found.');
+}
+
+/*
+|--------------------------------------------------------------------------
+| Fetch current blog
+|--------------------------------------------------------------------------
+*/
+
+try {
+    $stmt = $pdo->prepare("
+        SELECT
+            id,
+            title,
+            slug,
+            category,
+            excerpt,
+            intro,
+            content,
+            featured_image,
+            image_alt,
+            author_name,
+            author_role,
+            reading_time,
+            tags,
+            seo_description,
+            published_at,
+            created_at
+        FROM blogs
+        WHERE slug = ?
+          AND status = 'published'
+          AND published_at IS NOT NULL
+        LIMIT 1
+    ");
+
+    $stmt->execute([$slug]);
+    $blog = $stmt->fetch();
+
+} catch (PDOException $e) {
+    error_log('Blog detail query error: ' . $e->getMessage());
+    http_response_code(500);
+    exit('Unable to load this article.');
+}
+
+if (!$blog) {
+    http_response_code(404);
+    exit('Blog not found.');
+}
+
+/*
+|--------------------------------------------------------------------------
+| Blog details
+|--------------------------------------------------------------------------
+*/
+
+$pageTitle = $blog['title'];
+
+$metaDescription = !empty($blog['seo_description'])
+    ? $blog['seo_description']
+    : ($blog['excerpt'] ?? '');
+
+$publishedDate = !empty($blog['published_at'])
+    ? $blog['published_at']
+    : $blog['created_at'];
+
+$formattedDate = $publishedDate
+    ? date('F d, Y', strtotime($publishedDate))
+    : '';
+
+$readingTime = max(1, (int) ($blog['reading_time'] ?? 5));
+
+$authorName = $blog['author_name'] ?: 'Real Estate Editorial Team';
+$authorRole = $blog['author_role'] ?: 'Property Insights';
+
+$imageUrl = !empty($blog['featured_image'])
+    ? (
+        preg_match('/^https?:\/\//i', $blog['featured_image'])
+            ? $blog['featured_image']
+            : $baseUrl . '/' . ltrim($blog['featured_image'], '/')
+    )
+    : 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=1800&q=85';
+
+$imageAlt = $blog['image_alt'] ?: $blog['title'];
+
+$articleUrl = $baseUrl . '/blog/blog-details.php?slug=' . rawurlencode($blog['slug']);
+
+$encodedArticleUrl = urlencode($articleUrl);
+$encodedArticleTitle = urlencode($blog['title']);
+
+/*
+|--------------------------------------------------------------------------
+| Generate Table of Contents from article headings
+|--------------------------------------------------------------------------
+*/
+
+$articleContent = $blog['content'] ?? '';
+$tableOfContents = [];
+
+if (class_exists('DOMDocument') && trim($articleContent) !== '') {
+    $previousLibxmlState = libxml_use_internal_errors(true);
+
+    $dom = new DOMDocument('1.0', 'UTF-8');
+
+    $dom->loadHTML(
+        '<?xml encoding="UTF-8"><div id="blog-content-root">' .
+        $articleContent .
+        '</div>',
+        LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+    );
+
+    $xpath = new DOMXPath($dom);
+    $root = $xpath->query('//*[@id="blog-content-root"]')->item(0);
+
+    if ($root) {
+        $headings = $xpath->query('.//h2 | .//h3', $root);
+        $usedIds = [];
+
+        foreach ($headings as $heading) {
+            $headingText = trim($heading->textContent);
+
+            if ($headingText === '') {
+                continue;
+            }
+
+            $headingSlug = strtolower($headingText);
+            $headingSlug = preg_replace('/[^a-z0-9]+/', '-', $headingSlug);
+            $headingSlug = trim($headingSlug, '-');
+
+            if ($headingSlug === '') {
+                $headingSlug = 'section';
+            }
+
+            $headingId = $headingSlug;
+            $counter = 2;
+
+            while (isset($usedIds[$headingId])) {
+                $headingId = $headingSlug . '-' . $counter;
+                $counter++;
+            }
+
+            $usedIds[$headingId] = true;
+            $heading->setAttribute('id', $headingId);
+
+            $tableOfContents[] = [
+                'title' => $headingText,
+                'id' => $headingId,
+                'level' => strtolower($heading->nodeName)
+            ];
+        }
+
+        $articleContent = '';
+
+        foreach ($root->childNodes as $child) {
+            $articleContent .= $dom->saveHTML($child);
+        }
+    }
+
+    libxml_clear_errors();
+    libxml_use_internal_errors($previousLibxmlState);
+}
+
+/*
+|--------------------------------------------------------------------------
+| Tags
+|--------------------------------------------------------------------------
+*/
+
+$blogTags = [];
+
+if (!empty($blog['tags'])) {
+    $blogTags = array_filter(
+        array_map('trim', explode(',', $blog['tags']))
+    );
+}
+
+/*
+|--------------------------------------------------------------------------
+| Related articles
+|--------------------------------------------------------------------------
+*/
+
+$relatedBlogs = [];
+
+try {
+    $relatedStmt = $pdo->prepare("
+        SELECT
+            id,
+            title,
+            slug,
+            category,
+            excerpt,
+            featured_image,
+            image_alt,
+            reading_time,
+            published_at
+        FROM blogs
+        WHERE status = 'published'
+          AND published_at IS NOT NULL
+          AND id != ?
+        ORDER BY
+            CASE WHEN category = ? THEN 0 ELSE 1 END,
+            published_at DESC,
+            id DESC
+        LIMIT 3
+    ");
+
+    $relatedStmt->execute([
+        $blog['id'],
+        $blog['category']
+    ]);
+
+    $relatedBlogs = $relatedStmt->fetchAll();
+
+} catch (PDOException $e) {
+    error_log('Related blogs query error: ' . $e->getMessage());
+}
+
+/*
+|--------------------------------------------------------------------------
+| Breadcrumb
+|--------------------------------------------------------------------------
+*/
+
+$breadcrumbItems = [
+    [
+        'label' => 'Blogs',
+        'url' => $baseUrl . '/blogs.php'
+    ],
+    [
+        'label' => $blog['title'],
+        'url' => null
+    ]
+];
+
+?>
+
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <title>A Complete Guide to Buying Your First Home | Real Estate Blog</title>
-    <meta name="description" content="Discover the essential steps to buying your first home, including budgeting, property selection, location research and important checks.">
+    <title><?= blog_detail_e($pageTitle) ?> | Real Estate Blog</title>
+
+    <meta name="description" content="<?= blog_detail_e($metaDescription) ?>">
+
+    <link rel="canonical" href="<?= blog_detail_e($articleUrl) ?>">
+
+    <meta property="og:type" content="article">
+    <meta property="og:title" content="<?= blog_detail_e($blog['title']) ?>">
+    <meta property="og:description" content="<?= blog_detail_e($metaDescription) ?>">
+    <meta property="og:url" content="<?= blog_detail_e($articleUrl) ?>">
+    <meta property="og:image" content="<?= blog_detail_e($imageUrl) ?>">
 
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet">
+
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
     <link href="https://cdn.jsdelivr.net/npm/remixicon@4.9.0/fonts/remixicon.css" rel="stylesheet">
 
-    <link rel="stylesheet" href="../css/style.css">
-    <link rel="stylesheet" href="../css/header.css">
-    <link rel="stylesheet" href="../css/footer.css">
+    <link rel="stylesheet" href="<?= $baseUrl ?>/css/style.css">
+    <link rel="stylesheet" href="<?= $baseUrl ?>/css/header.css">
+    <link rel="stylesheet" href="<?= $baseUrl ?>/css/footer.css">
 </head>
 
 <body>
@@ -23,14 +283,9 @@
 
 <main>
 
+    <!-- Breadcrumb -->
     <?php
         $pageTitle = 'Blog Details';
-        $breadcrumbItems = [
-            
-            ['label' => 'Blogs', 'url' => '/blogs.php'],
-            ['label' => 'Buying Your First Home', 'url' => null]
-        ];
-
         include __DIR__ . '/../includes/breadcrumb.php';
     ?>
 
@@ -39,39 +294,52 @@
         <div class="container">
 
             <div class="blog-detail-header-inner">
-                <a href="/blogs.php" class="blog-back-link">
+
+                <a href="<?= $baseUrl ?>/blogs.php" class="blog-back-link">
                     <i class="ri-arrow-left-line"></i> Back to Blogs
                 </a>
 
-                <span class="blog-detail-category">Buying Guide</span>
+                <span class="blog-detail-category">
+                    <?= blog_detail_e($blog['category']) ?>
+                </span>
 
-                <h1>A Complete Guide to Buying Your First Home</h1>
+                <h1><?= blog_detail_e($blog['title']) ?></h1>
 
-                <p class="blog-detail-intro">
-                    From setting your budget to choosing the right location,
-                    discover the important steps that can help you make a
-                    confident and informed property purchase.
-                </p>
+                <?php if (!empty($blog['intro'])): ?>
+                    <p class="blog-detail-intro">
+                        <?= blog_detail_e($blog['intro']) ?>
+                    </p>
+                <?php elseif (!empty($blog['excerpt'])): ?>
+                    <p class="blog-detail-intro">
+                        <?= blog_detail_e($blog['excerpt']) ?>
+                    </p>
+                <?php endif; ?>
 
                 <div class="blog-detail-meta">
+
                     <div class="blog-author-info">
                         <span class="blog-author-avatar">
                             <i class="ri-user-3-line"></i>
                         </span>
+
                         <div>
-                            <strong>Real Estate Editorial Team</strong>
-                            <span>Property Insights</span>
+                            <strong><?= blog_detail_e($authorName) ?></strong>
+                            <span><?= blog_detail_e($authorRole) ?></span>
                         </div>
                     </div>
 
                     <span class="blog-meta-item">
-                        <i class="ri-calendar-line"></i> October 12, 2026
+                        <i class="ri-calendar-line"></i>
+                        <?= blog_detail_e($formattedDate) ?>
                     </span>
 
                     <span class="blog-meta-item">
-                        <i class="ri-time-line"></i> 5 min read
+                        <i class="ri-time-line"></i>
+                        <?= $readingTime ?> min read
                     </span>
+
                 </div>
+
             </div>
 
         </div>
@@ -80,14 +348,18 @@
     <!-- Featured Article Image -->
     <section class="blog-detail-cover-section">
         <div class="container">
+
             <div class="blog-detail-cover">
                 <img
-                    src="https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=1800&q=85"
-                    alt="Modern home representing a first-time home purchase">
+                    src="<?= blog_detail_e($imageUrl) ?>"
+                    alt="<?= blog_detail_e($imageAlt) ?>"
+                    loading="eager">
                 <span class="blog-cover-caption">
-                    Your journey towards finding the right home starts with a plan.
+                    <?= blog_detail_e($blog['title']) ?>
                 </span>
+
             </div>
+
         </div>
     </section>
 
@@ -101,168 +373,73 @@
                 <article class="blog-article">
 
                     <div class="blog-article-content">
-
-                        <p class="blog-article-lead">
-                            Buying your first home is an exciting milestone,
-                            but it also involves important financial and
-                            practical decisions. A clear plan can help you
-                            compare properties, understand your budget and
-                            choose a home that suits your needs.
-                        </p>
-
-                        <p>
-                            Before you start visiting properties, take time to
-                            understand your requirements. Consider your preferred
-                            location, daily commute, available facilities,
-                            future plans and the amount you can comfortably spend.
-                        </p>
+                        <?php if (!empty($blog['intro'])): ?>
+                            <p class="blog-article-lead">
+                                <?= blog_detail_e($blog['intro']) ?>
+                            </p>
+                        <?php endif; ?>
 
                         <!-- Table of Contents -->
-                        <div class="blog-table-of-contents">
-                            <h2><i class="ri-list-check-3"></i> In This Article</h2>
-                            <ol>
-                                <li><a href="#set-budget">Set a Realistic Budget</a></li>
-                                <li><a href="#choose-location">Choose the Right Location</a></li>
-                                <li><a href="#property-research">Research Properties Carefully</a></li>
-                                <li><a href="#legal-checks">Review Documents and Legal Checks</a></li>
-                                <li><a href="#final-decision">Make an Informed Decision</a></li>
-                            </ol>
+                        <?php if (!empty($tableOfContents)): ?>
+
+                            <div class="blog-table-of-contents">
+                                <h2>
+                                    <i class="ri-list-check-3"></i>
+                                    In This Article
+                                </h2>
+                                <ol>
+                                    <?php foreach ($tableOfContents as $item): ?>
+                                        <li>
+                                            <a href="#<?= blog_detail_e($item['id']) ?>">
+                                                <?= blog_detail_e($item['title']) ?>
+                                            </a>
+                                        </li>
+                                    <?php endforeach; ?>
+                                </ol>
+                            </div>
+
+                        <?php endif; ?>
+
+                        <!-- Dynamic Article Content -->
+                        <div class="blog-dynamic-content">
+                            <?= $articleContent ?>
                         </div>
-
-                        <h2 id="set-budget">1. Set a Realistic Budget</h2>
-
-                        <p>
-                            Start by calculating how much you can afford without
-                            putting pressure on your monthly finances. In addition
-                            to the purchase price, consider registration charges,
-                            applicable taxes, maintenance, moving costs and any
-                            necessary renovation expenses.
-                        </p>
-
-                        <p>
-                            If you plan to use a home loan, compare offers from
-                            different lenders. Review the interest rate, repayment
-                            period, processing fees and monthly instalment before
-                            making a commitment.
-                        </p>
-
-                        <div class="blog-article-tip">
-                            <span><i class="ri-lightbulb-line"></i></span>
-                            <p>
-                                <strong>Helpful tip:</strong> Keep an emergency
-                                reserve instead of using all your available savings
-                                for the property purchase.
-                            </p>
-                        </div>
-
-                        <h2 id="choose-location">2. Choose the Right Location</h2>
-
-                        <p>
-                            The right location can make everyday life more
-                            convenient. Check the distance to your workplace,
-                            schools, hospitals, public transport and shopping areas.
-                            Visit the neighbourhood at different times to understand
-                            traffic, noise levels and accessibility.
-                        </p>
-
-                        <p>
-                            You should also research planned infrastructure and
-                            local development. Treat future appreciation as a
-                            possibility rather than a guaranteed return.
-                        </p>
-
-                        <figure class="blog-inline-image">
-                            <img
-                                src="https://images.unsplash.com/photo-1449158743715-0a90ebb6d2d8?auto=format&fit=crop&w=1200&q=85"
-                                alt="Residential neighbourhood with homes"
-                                loading="lazy">
-                            <figcaption>
-                                Evaluate the neighbourhood as carefully as the property itself.
-                            </figcaption>
-                        </figure>
-
-                        <h2 id="property-research">3. Research Properties Carefully</h2>
-
-                        <p>
-                            Compare multiple properties based on their condition,
-                            layout, usable area, amenities, asking price and
-                            neighbourhood. Make a list of essential features and
-                            optional preferences so that you can evaluate each
-                            property consistently.
-                        </p>
-
-                        <ul class="blog-article-list">
-                            <li><i class="ri-check-line"></i> Inspect the structure and overall condition.</li>
-                            <li><i class="ri-check-line"></i> Verify the area and layout details.</li>
-                            <li><i class="ri-check-line"></i> Ask about maintenance costs and shared facilities.</li>
-                            <li><i class="ri-check-line"></i> Compare prices with similar nearby properties.</li>
-                            <li><i class="ri-check-line"></i> Visit the property before making a final decision.</li>
-                        </ul>
-
-                        <h2 id="legal-checks">4. Review Documents and Legal Checks</h2>
-
-                        <p>
-                            Before paying a substantial advance or signing an
-                            agreement, have the relevant property documents
-                            reviewed by a qualified local property lawyer.
-                            Verification requirements can differ depending on
-                            the location and type of property.
-                        </p>
-
-                        <p>
-                            Depending on the transaction, checks may include
-                            ownership records, title documents, encumbrances,
-                            approved plans, applicable project registrations
-                            and outstanding dues. Where relevant in India,
-                            consult the appropriate state RERA authority.
-                        </p>
-
-                        <div class="blog-article-tip">
-                            <span><i class="ri-shield-check-line"></i></span>
-                            <p>
-                                <strong>Important:</strong> Do not rely only on
-                                verbal assurances. Confirm material claims and
-                                documents independently before completing a purchase.
-                            </p>
-                        </div>
-
-                        <h2 id="final-decision">5. Make an Informed Decision</h2>
-                        <p>
-                            Once you have compared your options, review the
-                            total cost, location, property condition and future
-                            suitability. Take time to resolve outstanding
-                            questions and understand the terms of the agreement.
-                        </p>
-
-                        <p>
-                            A well-informed decision is one that fits both your
-                            present needs and your longer-term plans. If anything
-                            remains unclear, seek advice from the appropriate
-                            legal or financial professional before proceeding.
-                        </p>
-
                         <!-- Article Tags -->
-                        <div class="blog-article-tags">
-                            <strong>Tags:</strong>
-                            <a href="/blogs.php?category=buying-guide">Buying Guide</a>
-                            <a href="/blogs.php?category=real-estate">Real Estate</a>
-                            <a href="/blogs.php?category=home-buying">Home Buying</a>
-                        </div>
+                        <?php if (!empty($blogTags)): ?>
+                            <div class="blog-article-tags">
+                                <strong>Tags:</strong>
+                                <?php foreach ($blogTags as $tag): ?>
+                                    <a href="<?= $baseUrl ?>/blogs.php?tag=<?= urlencode($tag) ?>">
+                                        <?= blog_detail_e($tag) ?>
+                                    </a>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
 
                         <!-- Share Article -->
                         <div class="blog-article-share">
                             <strong>Share this article</strong>
                             <div class="blog-share-links">
-                                <a href="https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fexample.com%2Fblog-details.php"
-                                   target="_blank" rel="noopener noreferrer" aria-label="Share on Facebook">
+                                <a
+                                    href="https://www.facebook.com/sharer/sharer.php?u=<?= $encodedArticleUrl ?>"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    aria-label="Share on Facebook">
                                     <i class="ri-facebook-fill"></i>
                                 </a>
-                                <a href="https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fexample.com%2Fblog-details.php"
-                                   target="_blank" rel="noopener noreferrer" aria-label="Share on LinkedIn">
+                                <a
+                                    href="https://www.linkedin.com/sharing/share-offsite/?url=<?= $encodedArticleUrl ?>"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    aria-label="Share on LinkedIn">
                                     <i class="ri-linkedin-fill"></i>
                                 </a>
-                                <a href="https://wa.me/?text=Read%20this%20real%20estate%20guide%3A%20https%3A%2F%2Fexample.com%2Fblog-details.php"
-                                   target="_blank" rel="noopener noreferrer" aria-label="Share on WhatsApp">
+
+                                <a
+                                    href="https://wa.me/?text=<?= $encodedArticleTitle ?>%20<?= $encodedArticleUrl ?>"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    aria-label="Share on WhatsApp">
                                     <i class="ri-whatsapp-line"></i>
                                 </a>
                             </div>
@@ -274,8 +451,12 @@
                                 <i class="ri-user-3-line"></i>
                             </span>
                             <div>
-                                <span class="blog-author-label">ABOUT THE AUTHOR</span>
-                                <h3>Real Estate Editorial Team</h3>
+                                <span class="blog-author-label">
+                                    ABOUT THE AUTHOR
+                                </span>
+                                <h3>
+                                    <?= blog_detail_e($authorName) ?>
+                                </h3>
                                 <p>
                                     Sharing practical property guides, home-buying
                                     information and real estate insights to help
@@ -283,24 +464,30 @@
                                 </p>
                             </div>
                         </div>
-
                     </div>
+
                 </article>
 
                 <!-- Sidebar -->
                 <aside class="blog-detail-sidebar">
 
                     <!-- Contents -->
-                    <div class="blog-sidebar-card">
-                        <h3><i class="ri-book-open-line"></i> Article Contents</h3>
-                        <nav class="blog-sidebar-nav" aria-label="Article contents">
-                            <a href="#set-budget">Set a Budget</a>
-                            <a href="#choose-location">Choose a Location</a>
-                            <a href="#property-research">Research Properties</a>
-                            <a href="#legal-checks">Legal Checks</a>
-                            <a href="#final-decision">Final Decision</a>
-                        </nav>
-                    </div>
+                    <?php if (!empty($tableOfContents)): ?>
+                        <div class="blog-sidebar-card">
+                            <h3>
+                                <i class="ri-book-open-line"></i>
+                                Article Contents
+                            </h3>
+                            <nav class="blog-sidebar-nav" aria-label="Article contents">
+                                <?php foreach ($tableOfContents as $item): ?>
+                                    <a href="#<?= blog_detail_e($item['id']) ?>">
+                                        <?= blog_detail_e($item['title']) ?>
+                                    </a>
+                                <?php endforeach; ?>
+                            </nav>
+                        </div>
+
+                    <?php endif; ?>
 
                     <!-- Property CTA -->
                     <div class="blog-sidebar-cta">
@@ -312,8 +499,9 @@
                             Explore available properties and find options
                             that match your requirements.
                         </p>
-                        <a href="/properties.php" class="btn btn-primary">
-                            Explore Properties <i class="ri-arrow-right-line"></i>
+                        <a href="<?= $baseUrl ?>/properties.php" class="btn btn-primary">
+                            Explore Properties
+                            <i class="ri-arrow-right-line"></i>
                         </a>
                     </div>
 
@@ -323,113 +511,86 @@
                             <i class="ri-customer-service-2-line"></i>
                         </span>
                         <h3>Need Property Guidance?</h3>
-                        <p>Get in touch with our team for help exploring property options.</p>
-                        <a href="/contact.php">
-                            Contact Our Team <i class="ri-arrow-right-line"></i>
+                        <p>
+                            Get in touch with our team for help exploring property options.
+                        </p>
+                        <a href="<?= $baseUrl ?>/contact.php">
+                            Contact Our Team
+                            <i class="ri-arrow-right-line"></i>
                         </a>
                     </div>
-
                 </aside>
-
             </div>
         </div>
     </section>
 
     <!-- Related Articles -->
-    <section class="blog-related-section section section-light">
-        <div class="container">
+    <?php if (!empty($relatedBlogs)): ?>
+        <section class="blog-related-section section section-light">
+            <div class="container"> 
+                <div class="section-heading"> 
+                    <span class="section-subtitle">KEEP EXPLORING</span> 
+                    <h2 class="section-title">Related Articles</h2> 
+                    <p class="section-description">
+                        Discover more insights to help you navigate the property market.
+                    </p>
+                </div>
+                <div class="blog-related-grid">
+                    <?php foreach ($relatedBlogs as $related): ?>
+                        <?php
+                            $relatedImage = !empty($related['featured_image'])
+                                ? (
+                                    preg_match('/^https?:\/\//i', $related['featured_image'])
+                                        ? $related['featured_image']
+                                        : $baseUrl . '/' . ltrim($related['featured_image'], '/')
+                                )
+                                : 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?auto=format&fit=crop&w=800&q=85';
 
-            <div class="section-heading">
-                <span class="section-subtitle">KEEP EXPLORING</span>
-                <h2 class="section-title">Related Articles</h2>
-                <p class="section-description">
-                    Discover more insights to help you navigate the property market.
-                </p>
-            </div>
+                            $relatedUrl = $baseUrl . '/blog/blog-details.php?slug=' .
+                                rawurlencode($related['slug']);
+                        ?>
 
-            <div class="blog-related-grid">
-
-                <article class="blog-related-card">
-                    <a href="/blog-details.php?slug=real-estate-investment-tips"
-                       class="blog-related-image">
-                        <img
-                            src="https://images.unsplash.com/photo-1460472178825-e5240623afd5?auto=format&fit=crop&w=800&q=85"
-                            alt="Property investment"
-                            loading="lazy">
-                    </a>
-                    <div class="blog-related-content">
-                        <span>Investment</span>
-                        <h3>
-                            <a href="/blog-details.php?slug=real-estate-investment-tips">
-                                Smart Real Estate Investment Tips for Beginners
+                        <article class="blog-related-card"> 
+                            <a href="<?= blog_detail_e($relatedUrl) ?>" class="blog-related-image">
+                                <img
+                                    src="<?= blog_detail_e($relatedImage) ?>"
+                                    alt="<?= blog_detail_e($related['image_alt'] ?: $related['title']) ?>"
+                                    loading="lazy"> 
                             </a>
-                        </h3>
-                        <a href="/blog-details.php?slug=real-estate-investment-tips"
-                           class="blog-read-more">
-                            Read Article <i class="ri-arrow-right-line"></i>
-                        </a>
-                    </div>
-                </article>
 
-                <article class="blog-related-card">
-                    <a href="/blog-details.php?slug=choosing-the-right-location"
-                       class="blog-related-image">
-                        <img
-                            src="https://images.unsplash.com/photo-1449158743715-0a90ebb6d2d8?auto=format&fit=crop&w=800&q=85"
-                            alt="Residential neighbourhood"
-                            loading="lazy">
+                            <div class="blog-related-content">
+
+                                <span>
+                                    <?= blog_detail_e($related['category']) ?>
+                                </span>
+
+                                <h3>
+                                    <a href="<?= blog_detail_e($relatedUrl) ?>">
+                                        <?= blog_detail_e($related['title']) ?>
+                                    </a>
+                                </h3>
+
+                                <a href="<?= blog_detail_e($relatedUrl) ?>" class="blog-read-more">
+                                    Read Article
+                                    <i class="ri-arrow-right-line"></i>
+                                </a>
+
+                            </div>
+
+                        </article>
+                    <?php endforeach; ?>
+                </div>
+                <div class="blog-related-action">
+                    <a href="<?= $baseUrl ?>/blogs.php" class="btn btn-outline-primary">
+                        View All Articles
+                        <i class="ri-arrow-right-line"></i>
                     </a>
-                    <div class="blog-related-content">
-                        <span>Location Guide</span>
-                        <h3>
-                            <a href="/blog-details.php?slug=choosing-the-right-location">
-                                How to Choose the Right Location for Your New Home
-                            </a>
-                        </h3>
-                        <a href="/blog-details.php?slug=choosing-the-right-location"
-                           class="blog-read-more">
-                            Read Article <i class="ri-arrow-right-line"></i>
-                        </a>
-                    </div>
-                </article>
-
-                <article class="blog-related-card">
-                    <a href="/blog-details.php?slug=home-buying-checklist"
-                       class="blog-related-image">
-                        <img
-                            src="https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?auto=format&fit=crop&w=800&q=85"
-                            alt="Contemporary home interior"
-                            loading="lazy">
-                    </a>
-                    <div class="blog-related-content">
-                        <span>Home Buying</span>
-                        <h3>
-                            <a href="/blog-details.php?slug=home-buying-checklist">
-                                Essential Things to Check Before Buying a Property
-                            </a>
-                        </h3>
-                        <a href="/blog-details.php?slug=home-buying-checklist"
-                           class="blog-read-more">
-                            Read Article <i class="ri-arrow-right-line"></i>
-                        </a>
-                    </div>
-                </article>
-
+                </div>
             </div>
-
-            <div class="blog-related-action">
-                <a href="/blogs.php" class="btn btn-outline-primary">
-                    View All Articles <i class="ri-arrow-right-line"></i>
-                </a>
-            </div>
-
-        </div>
-    </section>
-
+        </section>
+    <?php endif; ?>
 </main>
-
 <?php include __DIR__ . '/../includes/footer.php'; ?>
-
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

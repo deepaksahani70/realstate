@@ -1,3 +1,14 @@
+<?php
+$currentPage = basename($_SERVER['PHP_SELF']);
+
+$isHome = $currentPage === 'index.php';
+$isProperties = $currentPage === 'properties.php';
+$isLocations = $currentPage === 'locations.php';
+$isAbout = $currentPage === 'about.php';
+$isBlog = $currentPage === 'blog.php';
+$isTeam = $currentPage === 'team.php' || $currentPage === 'profile-details.php';
+$isContact = $currentPage === 'contact.php';
+?>
 
 <header class="re-header" id="siteHeader">
     <div class="container">
@@ -19,12 +30,13 @@
                 <ul class="re-nav-list">
 
                     <li class="re-nav-item">
-                        <a href="index.php" class="re-nav-link active">Home</a>
+                        <!-- <a href="index.php" class="re-nav-link active">Home</a> -->
+                         <a href="index.php" class="re-nav-link <?= $isHome ? 'active' : '' ?>">Home</a>
                     </li>
 
                     <!-- Properties Dropdown -->
                     <li class="re-nav-item re-has-dropdown">
-                        <a href="properties.php" class="re-nav-link">
+                        <a href="properties.php" class="re-nav-link <?= $isProperties ? 'active' : '' ?>">
                             Properties
                             <i class="bi bi-chevron-down re-chevron"></i>
                         </a>
@@ -59,7 +71,7 @@
 
                     <!-- Locations Dropdown -->
                     <li class="re-nav-item re-has-dropdown">
-                        <a href="locations.php" class="re-nav-link">
+                        <a href="locations.php" class="re-nav-link <?= $isLocations ? 'active' : '' ?>">
                             Locations
                             <i class="bi bi-chevron-down re-chevron"></i>
                         </a>
@@ -89,15 +101,18 @@
                     </li>
 
                     <li class="re-nav-item">
-                        <a href="about.php" class="re-nav-link">About Us</a>
+                        <a href="about.php" class="re-nav-link <?= $isAbout ? 'active' : '' ?>">About Us</a>
                     </li>
 
                     <li class="re-nav-item">
-                        <a href="blog.php" class="re-nav-link">Blog</a>
+                       <a href="blog.php" class="re-nav-link <?= $isBlog ? 'active' : '' ?>">Blog</a>
+                    </li>
+                      <li class="re-nav-item">
+                        <a href="team.php" class="re-nav-link <?= $isTeam ? 'active' : '' ?>">Team</a>
                     </li>
 
                     <li class="re-nav-item">
-                        <a href="contact.php" class="re-nav-link">Contact</a>
+                       <a href="contact.php" class="re-nav-link <?= $isContact ? 'active' : '' ?>">Contact</a>
                     </li>
 
                 </ul>
@@ -105,9 +120,9 @@
 
             <!-- Desktop CTA -->
             <div class="re-header-actions">
-                <a href="add-property.php" class="btn btn-primary re-header-cta">
+                <a href="properties.php" class="btn btn-primary re-header-cta">
                     <i class="bi bi-plus-lg"></i>
-                    List Your Property
+                     Property
                 </a>
             </div>
 
@@ -160,7 +175,7 @@
         <ul class="re-mobile-nav-list">
 
             <li>
-                <a href="index.php" class="re-mobile-link active">
+               <a href="index.php" class="re-mobile-link <?= $isHome ? 'active' : '' ?>">
                     <i class="bi bi-house-door"></i>
                     <span>Home</span>
                 </a>
@@ -169,7 +184,7 @@
             <!-- Mobile Properties Accordion -->
             <li class="re-mobile-has-dropdown">
                 <div class="re-mobile-link-row">
-                    <a href="/properties.php" class="re-mobile-link">
+                   <a href="properties.php" class="re-mobile-link <?= $isProperties ? 'active' : '' ?>">
                         <i class="bi bi-buildings"></i>
                         <span>Properties</span>
                     </a>
@@ -199,7 +214,7 @@
             <!-- Mobile Locations Accordion -->
             <li class="re-mobile-has-dropdown">
                 <div class="re-mobile-link-row">
-                    <a href="locations.php" class="re-mobile-link">
+                   <a href="locations.php" class="re-mobile-link <?= $isLocations ? 'active' : '' ?>">
                         <i class="bi bi-geo-alt"></i>
                         <span>Locations</span>
                     </a>
@@ -220,21 +235,27 @@
             </li>
 
             <li>
-                <a href="about.php" class="re-mobile-link">
+               <a href="about.php" class="re-mobile-link <?= $isAbout ? 'active' : '' ?>">
                     <i class="bi bi-info-circle"></i>
                     <span>About Us</span>
                 </a>
             </li>
 
             <li>
-                <a href="blog.php" class="re-mobile-link">
+                <a href="blog.php" class="re-mobile-link <?= $isBlog ? 'active' : '' ?>">
                     <i class="bi bi-journal-text"></i>
                     <span>Blog</span>
                 </a>
             </li>
+              <li>
+               <a href="team.php" class="re-mobile-link <?= $isTeam ? 'active' : '' ?>">
+                    <i class="bi bi-journal-text"></i>
+                    <span>Team</span>
+                </a>
+            </li>
 
             <li>
-                <a href="contact.php" class="re-mobile-link">
+               <a href="contact.php" class="re-mobile-link <?= $isContact ? 'active' : '' ?>">
                     <i class="bi bi-envelope"></i>
                     <span>Contact</span>
                 </a>

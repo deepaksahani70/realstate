@@ -28,7 +28,6 @@
       $breadcrumbItems = [
          ['label' => 'Contact Us', 'url' => null]
       ];
-
       include __DIR__ . '/includes/breadcrumb.php';
     ?> 
 
@@ -236,7 +235,6 @@
             </div>
         </div>
     </section>
-
 
     <?php include __DIR__ . '/includes/footer.php'; ?>
 
